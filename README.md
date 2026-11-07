@@ -30,6 +30,29 @@ try cpu.call(0x6000)                        // JSR and run until it returns
 | `UndocumentedInstructions.swift` | the undocumented ones that need more than a line |
 | `Arithmetic.swift` | shifts, compare, ADC/SBC with the NMOS decimal mode |
 | `Flag.swift` | the status bits |
+| `Registers.swift` | `Registers` (A, X, Y, P as a value, with the flags of LDA, CMP, ADC, SBC, BIT) and `Adder`, for Swift standing in for 6502 code |
+
+## Swift in place of 6502 code
+
+A host can trap a routine's entry (`traps`, `onTrap`) and run Swift there
+instead. `cpu.registers` hands it A, X, Y and P as a value, and the helpers
+leave the flags as the instructions do (binary mode), so its callers find them
+as the original leaves them:
+
+```swift
+cpu.traps[0x6000] = true
+cpu.onTrap = { pc in
+    var r = cpu.registers
+    r.a = r.adc(r.a, cpu.mem[0x80])         // ADC $80
+    r.compare(r.a, 0x40)                    // CMP #$40
+    cpu.registers = r
+    cpu.returnFromSubroutine()              // RTS
+    return true
+}
+```
+
+`Adder` carries through `CLC / ADC / ADC …` where nothing in between touches
+the flags.
 
 ## Cycles
 
@@ -84,8 +107,8 @@ vector. B is never set in `p`, only in the copy PHP and BRK push.
 
 * `swift test`: the table, cycles and bus cycles, decimal mode, the JMP
   ($xxFF) bug, BRK/RTI/IRQ, JAM, the undocumented edge cases.
-* Against AppleWin's own code: Robot Odyssey's `Data/cpu_check.sh
-  path/to/AppleWin [N]` builds AppleWin's `cpu6502.h` (from the checkout,
+* Against AppleWin's own code: `Data/cpu_check.sh path/to/AppleWin [N]`
+  builds AppleWin's `cpu6502.h` (from the checkout,
   with a small shim) and runs N random instructions of every opcode on both
   (random registers, flags, PC, operands, memory), comparing registers,
   flags, cycles, the jam and every byte written. 10,000 of each (2.56 M):

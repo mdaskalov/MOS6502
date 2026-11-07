@@ -230,3 +230,68 @@ private func cycles(_ cpu: CPU6502) throws -> UInt64 {
         #expect(reads == 1)
     }
 }
+
+/// `Registers`' helpers against the CPU running the instruction, for every
+/// operand pair and incoming carry, with the other flags set and clear.
+@Suite struct RegisterHelpers {
+    /// Runs `opcode #m` with A = `a` and P = `p`; the registers it leaves.
+    private static func run(_ c: CPU6502, _ opcode: UInt8, a: UInt8, m: UInt8, p: UInt8) throws -> CPU6502.Registers {
+        (c.mem[0x0300], c.mem[0x0301], c.pc) = (opcode, m, 0x0300)
+        c.registers = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+        try c.step()
+        return c.registers
+    }
+
+    /// Ps to start from: carry clear and set, the others all clear and all set
+    /// (D clear: the helpers are binary mode).
+    private static let starts: [UInt8] = [0x20, 0x21, 0xF6, 0xF7]
+
+    private static func each(_ body: (UInt8, UInt8, UInt8) throws -> Void) rethrows {
+        for p in starts { for a in 0 ... 255 { for m in 0 ... 255 { try body(UInt8(a), UInt8(m), p) } } }
+    }
+
+    @Test func adcAndSbc() throws {
+        let c = cpu([])
+        try Self.each { a, m, p in
+            var r = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+            r.a = r.adc(a, m)
+            let adc = try Self.run(c, 0x69, a: a, m: m, p: p)            // ADC #m
+            #expect(r == adc)
+            r = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+            r.a = r.sbc(a, m)
+            let sbc = try Self.run(c, 0xE9, a: a, m: m, p: p)            // SBC #m
+            #expect(r == sbc)
+        }
+    }
+
+    @Test func compare() throws {
+        let c = cpu([])
+        try Self.each { a, m, p in
+            var r = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+            r.compare(a, m)
+            let cmp = try Self.run(c, 0xC9, a: a, m: m, p: p)            // CMP #m
+            #expect(r == cmp)
+        }
+    }
+
+    @Test func bitAndLoad() throws {
+        let c = cpu([])
+        try Self.each { a, m, p in
+            var r = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+            r.bit(a, m)
+            c.mem[0x0080] = m
+            let bit = try Self.run(c, 0x24, a: a, m: 0x80, p: p)         // BIT $80
+            #expect(r == bit)
+            r = CPU6502.Registers(a: a, x: 0x11, y: 0x22, p: p)
+            r.a = r.nz(m)
+            let lda = try Self.run(c, 0xA9, a: a, m: m, p: p)            // LDA #m
+            #expect(r == lda)
+        }
+    }
+
+    @Test func adderCarriesThroughTheChain() {
+        var add = CPU6502.Adder()
+        #expect(add(0xF0, 0x20) == 0x10 && add.carry)
+        #expect(add(0x01, 0x01) == 0x03 && !add.carry)                 // the carry in
+    }
+}
