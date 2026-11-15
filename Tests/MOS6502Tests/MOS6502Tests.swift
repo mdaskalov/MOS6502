@@ -2,10 +2,10 @@ import Testing
 @testable import MOS6502
 
 /// A CPU with `code` at $0300, PC there.
-private func cpu(_ code: [UInt8], at origin: Int = 0x0300) -> CPU6502 {
+private func cpu(_ code: [UInt8], at origin: Int = 0x0300, _ variant: CPU6502.Variant = .nmos6502) -> CPU6502 {
     var mem = [UInt8](repeating: 0, count: 0x10000)
     mem.replaceSubrange(origin ..< origin + code.count, with: code)
-    let cpu = CPU6502(memory: mem)
+    let cpu = CPU6502(memory: mem, variant: variant)
     cpu.pc = UInt16(origin)
     return cpu
 }
@@ -228,6 +228,140 @@ private func cycles(_ cpu: CPU6502) throws -> UInt64 {
         #expect(try cycles(c) == 4)
         #expect(try cycles(c) == 2)
         #expect(reads == 1)
+    }
+}
+
+/// A 65C02 with `code` at $0300, PC there.
+private func cmos(_ code: [UInt8]) -> CPU6502 {
+    cpu(code, at: 0x0300, .cmos65C02)
+}
+
+@Suite struct CMOS65C02 {
+    @Test func tableAgreesWithTheModes() {
+        for (i, op) in Opcode.table65C02.enumerated() {
+            #expect(Int(op.byte) == i)
+            #expect(op.mnemonic != .jam)
+            #expect(op.isDocumented || op.mnemonic == .nop)     // the unused opcodes are NOPs
+        }
+        #expect(Opcode(0x80, .cmos65C02).mnemonic == .bra)
+        #expect(Opcode(0x80).mnemonic == .nop)
+        #expect(Opcode(0xB2, .cmos65C02).description == "LDA (zp)")
+        #expect(AddressingMode.absoluteIndexedIndirect.syntax(0x1234, next: 0) == "($1234,X)")
+    }
+
+    @Test func newInstructions() throws {
+        // LDX #$12  PHX  PLY  STZ $10  LDA #$0F  TSB $11  TRB $12  INC A  BRA +1  BRK  DEC A
+        let c = cmos([0xA2, 0x12, 0xDA, 0x7A, 0x64, 0x10, 0xA9, 0x0F, 0x04, 0x11, 0x14, 0x12, 0x1A, 0x80, 0x01, 0x00, 0x3A])
+        c.mem[0x10] = 0x55
+        c.mem[0x11] = 0xF0
+        c.mem[0x12] = 0x3C
+        for _ in 0 ..< 3 { try c.step() }
+        #expect(c.y == 0x12)
+        try c.step()
+        #expect(c.mem[0x10] == 0)
+        try c.step()
+        try c.step()                                        // TSB: no bit in common, Z set
+        #expect(c.mem[0x11] == 0xFF && c.p & CPU6502.Flag.zero != 0)
+        try c.step()                                        // TRB: $0C in common
+        #expect(c.mem[0x12] == 0x30 && c.p & CPU6502.Flag.zero == 0)
+        try c.step()
+        #expect(c.a == 0x10)
+        #expect(try cycles(c) == 3)                         // BRA: always taken
+        try c.step()
+        #expect(c.a == 0x0F)
+    }
+
+    @Test func newModes() throws {
+        // LDA ($20)  JMP ($0400,X)
+        let c = cmos([0xB2, 0x20, 0x7C, 0x00, 0x04])
+        c.mem[0x20] = 0x00
+        c.mem[0x21] = 0x50
+        c.mem[0x5000] = 0x42
+        c.x = 4
+        c.mem[0x404] = 0x34
+        c.mem[0x405] = 0x12
+        #expect(try cycles(c) == 5)
+        #expect(c.a == 0x42)
+        #expect(try cycles(c) == 6)
+        #expect(c.pc == 0x1234)
+    }
+
+    @Test func jmpIndirectCarriesIntoThePointersHighByte() throws {
+        let c = cmos([0x6C, 0xFF, 0x12])
+        c.mem[0x12FF] = 0x34
+        c.mem[0x1300] = 0x56
+        c.mem[0x1200] = 0x99
+        #expect(try cycles(c) == 7)
+        #expect(c.pc == 0x5634)
+    }
+
+    @Test func bitImmediateSetsZOnly() throws {
+        let c = cmos([0xA9, 0x01, 0x89, 0xC0])
+        c.p |= CPU6502.Flag.negative
+        try c.step()
+        c.p |= CPU6502.Flag.overflow
+        try c.step()
+        #expect(c.p & CPU6502.Flag.zero != 0)
+        #expect(c.p & CPU6502.Flag.overflow != 0)
+    }
+
+    @Test func decimalModeFlagsAreValidAndCostACycle() throws {
+        // SED  CLC  LDA #$99  ADC #$01: $00, Z set, C set; 3 cycles
+        let c = cmos([0xF8, 0x18, 0xA9, 0x99, 0x69, 0x01, 0x38, 0xA9, 0x00, 0xE9, 0x01])
+        for _ in 0 ..< 3 { try c.step() }
+        #expect(try cycles(c) == 3)
+        #expect(c.a == 0x00 && c.p & CPU6502.Flag.zero != 0 && c.p & CPU6502.Flag.carry != 0)
+        for _ in 0 ..< 2 { try c.step() }                   // SEC  LDA #$00  SBC #$01: $99, N set, C clear
+        try c.step()
+        #expect(c.a == 0x99 && c.p & CPU6502.Flag.negative != 0 && c.p & CPU6502.Flag.carry == 0)
+    }
+
+    @Test func brkAndInterruptsClearD() throws {
+        let c = cmos([0xF8, 0x00])
+        c.mem[0xFFFE] = 0x00
+        c.mem[0xFFFF] = 0x40
+        try c.step()
+        try c.step()
+        #expect(c.pc == 0x4000 && c.p & CPU6502.Flag.decimal == 0)
+        #expect(c.mem[0x100 + Int(c.sp) + 1] & CPU6502.Flag.decimal != 0)    // pushed with D
+        c.p |= CPU6502.Flag.decimal
+        c.reset()
+        #expect(c.p & CPU6502.Flag.decimal == 0)
+    }
+
+    @Test func shiftsAbsXCrossingAPageTakeACycleMore() throws {
+        let c = cmos([0x1E, 0xFF, 0x20, 0xFE, 0xFF, 0x20])  // ASL $20FF,X  INC $20FF,X
+        c.x = 1
+        #expect(try cycles(c) == 7)
+        #expect(try cycles(c) == 7)
+        let n = cpu([0x1E, 0xFF, 0x20])
+        n.x = 1
+        #expect(try cycles(n) == 7)
+        let same = cmos([0x1E, 0x00, 0x20])
+        #expect(try cycles(same) == 6)
+    }
+
+    @Test func unusedOpcodesAreNOPs() throws {
+        let c = cmos([0x03, 0x02, 0x00, 0x5C, 0x30, 0xC0, 0xDC, 0x30, 0xC0])
+        c.ioPages[0xC0] = true
+        var reads = 0
+        c.ioRead = { _ in reads += 1; return 0 }
+        #expect(try cycles(c) == 1)
+        #expect(try cycles(c) == 2)
+        #expect(try cycles(c) == 8)                         // $5C: no read
+        #expect(try cycles(c) == 4)                         // $DC: reads
+        #expect(reads == 1 && c.pc == 0x0309)
+    }
+
+    @Test func ioWritePagesTakeWritesOnly() throws {
+        let c = cmos([0xAD, 0x00, 0x40, 0x8D, 0x01, 0x40])   // LDA $4000  STA $4001
+        c.mem[0x4000] = 0x77
+        c.ioWritePages[0x40] = true
+        var written: [UInt16: UInt8] = [:]
+        c.ioWrite = { written[$0] = $1 }
+        try c.step()
+        try c.step()
+        #expect(c.a == 0x77 && written == [0x4001: 0x77] && c.mem[0x4001] == 0)
     }
 }
 

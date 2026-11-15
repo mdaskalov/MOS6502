@@ -1,10 +1,12 @@
-// Compares the MOS6502 package with AppleWin's 6502 on the random single
+// Compares the MOS6502 package with AppleWin's 6502 or 65C02 on the random single
 // instructions cpu_check_applewin.cpp ran (cpu_check.sh builds and runs both):
 // registers, flags (B aside), cycles, the jam and every byte written.
 //
-// The differences where the package follows the 6502 rather than AppleWin
+// The differences where the package follows the chip rather than AppleWin
 // are counted apart, as long as they are exactly those (README of the
-// package): DCP's and ISC's carry when the operand wraps, ARR in decimal mode.
+// package): the 6502's DCP's and ISC's carry when the operand wraps, ARR in
+// decimal mode; the 65C02's JMP through a pointer at $FFFF, which AppleWin
+// reads past its 64K.
 //
 // Usage: cpu_check CASES.bin
 
@@ -36,8 +38,9 @@ struct CPUCheck {
             exit(2)
         }
         var reader = Reader(data: try Data(contentsOf: URL(fileURLWithPath: args[1])))
+        let variant: CPU6502.Variant = reader.byte() == 1 ? .cmos65C02 : .nmos6502
         let start = (0 ..< 0x10000).map { _ in reader.byte() }
-        let cpu = CPU6502(memory: start)
+        let cpu = CPU6502(memory: start, variant: variant)
         var cases = [Int](repeating: 0, count: 256)
         var expected = [Int](repeating: 0, count: 256)
         var unexpected = [Int](repeating: 0, count: 256)
@@ -70,10 +73,10 @@ struct CPUCheck {
                 }
             }
 
-            let opcode = Opcode(code[0])
+            let opcode = Opcode(code[0], variant)
             cases[Int(code[0])] += 1
             guard ours != appleWin else { continue }
-            if isKnownDifference(opcode, input, ours, appleWin) {
+            if isKnownDifference(opcode, input, code, ours, appleWin) {
                 expected[Int(code[0])] += 1
                 continue
             }
@@ -85,9 +88,9 @@ struct CPUCheck {
         }
 
         let total = cases.reduce(0, +)
-        print("\(total) instructions, \(cases.filter { $0 > 0 }.count) opcodes")
+        print("\(variant == .nmos6502 ? "6502" : "65C02"): \(total) instructions, \(cases.filter { $0 > 0 }.count) opcodes")
         for i in 0 ..< 256 where expected[i] > 0 {
-            print("  \(hex(UInt8(i))) \(Opcode(UInt8(i))): \(expected[i]) of \(cases[i]) differ as expected (the 6502's result)")
+            print("  \(hex(UInt8(i))) \(Opcode(UInt8(i), variant)): \(expected[i]) of \(cases[i]) differ as expected (the chip's result)")
         }
         let bad = unexpected.reduce(0, +)
         print(bad == 0 ? "no other differences" : "\(bad) UNEXPECTED DIFFERENCES")
@@ -96,7 +99,14 @@ struct CPUCheck {
     }
 
     /// The package's results where it follows the 6502, not AppleWin.
-    static func isKnownDifference(_ opcode: Opcode, _ input: State, _ ours: State, _ appleWin: State) -> Bool {
+    static func isKnownDifference(_ opcode: Opcode, _ input: State, _ code: [UInt8], _ ours: State, _ appleWin: State) -> Bool {
+        if opcode.mnemonic == .jmp, opcode.byte != 0x4C, Opcode.table65C02.contains(opcode) {
+            // JMP ($FFFF), JMP ($FFxx,X) past $FFFF: the 65C02 wraps to $0000, AppleWin reads on
+            var pcAside = appleWin
+            pcAside.pc = ours.pc
+            let pointer = (Int(code[1]) | Int(code[2]) << 8) + (opcode.mode == .absoluteIndexedIndirect ? Int(input.x) : 0)
+            return pcAside == ours && pointer >= 0xFFFF
+        }
         var carryAside = appleWin
         carryAside.p = carryAside.p & ~CPU6502.Flag.carry | ours.p & CPU6502.Flag.carry
         switch opcode.mnemonic {

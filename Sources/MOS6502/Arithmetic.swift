@@ -76,4 +76,55 @@ extension CPU6502 {
         if high < 0 { high -= 0x60 }
         self.a = UInt8(truncatingIfNeeded: high + low)
     }
+
+    // MARK: the 65C02's decimal mode
+
+    /// ADC in decimal mode on the 65C02: the BCD sum, N and Z from it, V and C
+    /// as AppleWin works them out; a cycle more than in binary.
+    func addDecimalCMOS(_ value: UInt8) {
+        let a = Int(self.a), v = Int(value)
+        var overflow = (a ^ v) & 0x80 == 0
+        var sum = (a & 0x0F) + (v & 0x0F) + Int(carry)
+        if sum >= 0x0A { sum = 0x10 | ((sum + 6) & 0x0F) }
+        sum += (a & 0xF0) + (v & 0xF0)
+        if sum >= 0xA0 {
+            set(Flag.carry, true)
+            if sum >= 0x180 { overflow = false }
+            sum += 0x60
+        } else {
+            set(Flag.carry, false)
+            if sum < 0x80 { overflow = false }
+        }
+        set(Flag.overflow, overflow)
+        self.a = nz(UInt8(sum & 0xFF))
+        end += 1
+    }
+
+    /// SBC in decimal mode on the 65C02: the BCD difference, N and Z from it,
+    /// V and C as AppleWin works them out; a cycle more than in binary.
+    func subtractDecimalCMOS(_ value: UInt8) {
+        let a = Int(self.a), v = Int(value)
+        var overflow = (a ^ v) & 0x80 != 0
+        var low = 0x0F + (a & 0x0F) - (v & 0x0F) + Int(carry)
+        var difference: Int
+        if low < 0x10 {
+            difference = 0
+            low -= 0x06
+        } else {
+            difference = 0x10
+            low -= 0x10
+        }
+        difference += 0xF0 + (a & 0xF0) - (v & 0xF0)
+        if difference < 0x100 {
+            set(Flag.carry, false)
+            if difference < 0x80 { overflow = false }
+            difference -= 0x60
+        } else {
+            set(Flag.carry, true)
+            if difference >= 0x180 { overflow = false }
+        }
+        set(Flag.overflow, overflow)
+        self.a = nz(UInt8((difference + low) & 0xFF))
+        end += 1
+    }
 }

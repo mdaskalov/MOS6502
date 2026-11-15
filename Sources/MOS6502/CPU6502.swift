@@ -1,9 +1,10 @@
-/// The NMOS 6502 of the Apple II and //e, as AppleWin (and so Mariani) runs it:
-/// all 256 opcodes, the undocumented ones included, and their cycles.
+/// The NMOS 6502 of the Apple II and //e, or the 65C02 of the enhanced //e
+/// (`Variant`), as AppleWin (and so Mariani) runs them: all 256 opcodes, the
+/// 6502's undocumented ones included, and their cycles.
 ///
 /// Runs one instruction at a time (`step`) over a flat 64K `mem`; the pages
 /// marked in `ioPages` go to `ioRead`/`ioWrite` instead (soft switches,
-/// devices).  An instruction makes the accesses its operation needs (a read, a
+/// devices), and those in `ioWritePages` their writes only.  An instruction makes the accesses its operation needs (a read, a
 /// write, or a read and then a write) on the cycles the 6502 makes them, and
 /// none of the 6502's dummy accesses, as in AppleWin.  Where AppleWin's
 /// results differ from the 6502's, the 6502's (README.md).
@@ -13,6 +14,21 @@
 /// across a call that could come back to them (`ioRead` may read `cycles`,
 /// switch banks in `mem`).
 public final class CPU6502 {
+    /// Which chip.
+    public enum Variant: Sendable, CaseIterable {
+        /// The NMOS 6502 of the Apple ][, ][+ and the unenhanced //e.
+        case nmos6502
+        /// The 65C02 of the enhanced //e: new instructions and modes, JMP
+        /// ($xxFF) fixed, the unused opcodes NOPs, N, V and Z valid in decimal
+        /// mode, D cleared by BRK, IRQ, NMI and RESET (`Opcode.table65C02`).
+        case cmos65C02
+    }
+
+    public let variant: Variant
+    /// The variant's 256 opcodes (`Opcode.table(for:)`).
+    let opcodes: [Opcode]
+    let isCMOS: Bool
+
     // MARK: registers
 
     @exclusivity(unchecked) public var a: UInt8 = 0
@@ -46,6 +62,10 @@ public final class CPU6502 {
     /// Pages ($xx00-$xxFF) whose reads and writes go to `ioRead`/`ioWrite`
     /// instead of `mem` ($C0 on the Apple II).
     @exclusivity(unchecked) public var ioPages = [Bool](repeating: false, count: 256)
+    /// Pages whose writes go to `ioWrite` and whose reads come from `mem`:
+    /// memory read from one bank and written to another (the //e's aux
+    /// memory with RAMWRT).
+    @exclusivity(unchecked) public var ioWritePages = [Bool](repeating: false, count: 256)
     public var ioRead: (UInt16) -> UInt8 = { _ in 0 }
     public var ioWrite: (UInt16, UInt8) -> Void = { _, _ in }
     /// Pages whose writes go to `mem` as ever and are then told to
@@ -73,9 +93,12 @@ public final class CPU6502 {
         case tooManySteps(pc: UInt16)
     }
 
-    public init(memory: [UInt8]) {
+    public init(memory: [UInt8], variant: Variant = .nmos6502) {
         precondition(memory.count == 0x10000)
         mem = memory
+        self.variant = variant
+        opcodes = Opcode.table(for: variant)
+        isCMOS = variant == .cmos65C02
     }
 
     // MARK: memory and stack
@@ -86,7 +109,7 @@ public final class CPU6502 {
 
     @inline(__always) public func write(_ address: UInt16, _ value: UInt8) {
         let page = Int(address >> 8)
-        if ioPages[page] {
+        if ioPages[page] || ioWritePages[page] {
             ioWrite(address, value)
         } else if watchedPages[page] {
             let old = mem[Int(address)]
@@ -132,7 +155,7 @@ public final class CPU6502 {
     public func step() throws {
         if traps[Int(pc)], onTrap(pc) { return }
         let address = pc
-        let opcode = Opcode(read(pc))
+        let opcode = opcodes[Int(read(pc))]
         if opcode.mnemonic == .brk, stopsAtBRK { throw CPUError.brk(at: address) }
         pc &+= 1
         let operand = operand(opcode)
@@ -156,10 +179,12 @@ public final class CPU6502 {
     // MARK: reset and interrupts
 
     /// The RESET line: the 6502 runs an interrupt's pushes without writing
-    /// (SP goes down by 3), sets I and goes to the vector at $FFFC; 7 cycles.
+    /// (SP goes down by 3), sets I (the 65C02 clears D) and goes to the vector
+    /// at $FFFC; 7 cycles.
     public func reset() {
         sp &-= 3
         p |= Flag.interrupt
+        if isCMOS { p &= ~Flag.decimal }
         pc = readWord(0xFFFC)
         isJammed = false
         cycles += 7
@@ -182,11 +207,12 @@ public final class CPU6502 {
     }
 
     /// BRK, IRQ and NMI: push PC and `status`, set I, go through `vector`.  The
-    /// NMOS 6502 leaves D as it is.
+    /// NMOS 6502 leaves D as it is, the 65C02 clears it.
     func interrupt(through vector: UInt16, pushing status: UInt8) {
         pushWord(pc)
         push(status)
         p |= Flag.interrupt
+        if isCMOS { p &= ~Flag.decimal }
         pc = readWord(vector)
     }
 }

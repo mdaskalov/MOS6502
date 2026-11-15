@@ -1,12 +1,14 @@
 # MOS6502
 
-The NMOS 6502 of the Apple II and //e as AppleWin (and so Mariani) runs it, in
-Swift: all 256 opcodes, the undocumented ones included, with their cycle
-counts.
+The NMOS 6502 of the Apple II and //e, and the 65C02 of the enhanced //e, as
+AppleWin (and so Mariani) runs them, in Swift: all 256 opcodes of each, the
+6502's undocumented ones included, with their cycle counts.
 
 ```swift
-let cpu = CPU6502(memory: ram)              // 64K
+let cpu = CPU6502(memory: ram)              // 64K, the NMOS 6502
+let cmos = CPU6502(memory: ram, variant: .cmos65C02)
 cpu.ioPages[0xC0] = true                    // $C000-$C0FF go to ioRead/ioWrite
+cpu.ioWritePages[0x20] = true               // $2000-$20FF: writes to ioWrite, reads from mem
 cpu.ioRead = { address in … }
 cpu.ioWrite = { address, value in … }
 cpu.watchedPages[0x20] = true               // $2000-$20FF written as ever, then told:
@@ -20,15 +22,16 @@ try cpu.call(0x6000)                        // JSR and run until it returns
 
 | File | What |
 |---|---|
-| `OpcodeTable.swift` | the 256 opcodes as `Opcode` values: byte, mnemonic, addressing mode, cycles, documented or not |
-| `Opcode.swift` | `Opcode`: length, the page‑crossing rule, `Opcode(0xBD)` |
+| `OpcodeTable.swift` | the 6502's 256 opcodes as `Opcode` values: byte, mnemonic, addressing mode, cycles, documented or not |
+| `OpcodeTable65C02.swift` | the 65C02's, generated from AppleWin's `cpu65C02.h` |
+| `Opcode.swift` | `Opcode`: length, the page‑crossing rule, `Opcode(0xBD)`, `Opcode(0x80, .cmos65C02)` |
 | `Mnemonic.swift` | what each instruction does, AppleWin's names for the undocumented ones, how it uses its operand (`Access`) |
-| `AddressingMode.swift` | the 13 modes, their length and assembly syntax |
-| `CPU6502.swift` | registers, memory, I/O and watched pages, traps, `step`, `call`, reset, IRQ, NMI |
+| `AddressingMode.swift` | the 15 modes (the 65C02's `(zp)` and `(abs,X)` among them), their length and assembly syntax |
+| `CPU6502.swift` | the variant, registers, memory, I/O, write‑only I/O and watched pages, traps, `step`, `call`, reset, IRQ, NMI |
 | `Addressing.swift` | finding the operand, and reading/writing it on the 6502's cycles |
 | `Instructions.swift` | `execute`: every instruction, one line each where it can be |
 | `UndocumentedInstructions.swift` | the undocumented ones that need more than a line |
-| `Arithmetic.swift` | shifts, compare, ADC/SBC with the NMOS decimal mode |
+| `Arithmetic.swift` | shifts, compare, ADC/SBC with the NMOS and the 65C02 decimal mode |
 | `Flag.swift` | the status bits |
 | `Registers.swift` | `Registers` (A, X, Y, P as a value, with the flags of LDA, CMP, ADC, SBC, BIT) and `Adder`, for Swift standing in for 6502 code |
 
@@ -78,6 +81,28 @@ or a read then a write – and, as AppleWin, none of the 6502's dummy accesses
 (the read at the unfixed address of an index crossing a page, the old value
 written back by a read‑modify‑write).
 
+## The 65C02
+
+`CPU6502(memory:, variant: .cmos65C02)` runs the 65C02 of the enhanced //e
+(the NCR/GTE chip: no RMB, SMB, BBR, BBS, which are Rockwell's and WDC's),
+from AppleWin's `cpu65C02.h`:
+
+* new instructions: BRA, PHX, PHY, PLX, PLY, STZ, TSB, TRB, INC A, DEC A,
+  BIT #imm (Z only), BIT zp,X and abs,X; new modes: `(zp)` and `JMP (abs,X)`;
+* `JMP ($xxFF)` takes its high byte from the next page (no NMOS bug), a
+  cycle more then (6 or 7);
+* decimal mode: N, Z and V from the BCD result, a cycle more for ADC and SBC;
+* BRK, IRQ, NMI and RESET clear D;
+* ASL, LSR, ROL, ROR abs,X: 6 cycles, 7 crossing a page (INC and DEC
+  abs,X 7 always);
+* the 6502's undocumented opcodes are NOPs, as AppleWin has them: $x3,
+  $x7, $xB, $xF one byte and one cycle; $x2 with an immediate operand;
+  $44, $54, $D4, $F4 with a zero‑page operand; $DC and $FC read an absolute
+  operand (4 cycles), $5C doesn't (8 cycles). Nothing jams.
+
+`Opcode(byte)` is the 6502's opcode, `Opcode(byte, .cmos65C02)` the
+65C02's (`Opcode.table65C02`), for disassembling.
+
 ## Undocumented opcodes
 
 They run as on the chip; AppleWin names differ for several
@@ -108,11 +133,13 @@ vector. B is never set in `p`, only in the copy PHP and BRK push.
 * `swift test`: the table, cycles and bus cycles, decimal mode, the JMP
   ($xxFF) bug, BRK/RTI/IRQ, JAM, the undocumented edge cases.
 * Against AppleWin's own code: `Data/cpu_check.sh path/to/AppleWin [N]`
-  builds AppleWin's `cpu6502.h` (from the checkout,
+  builds AppleWin's `cpu6502.h` and `cpu65C02.h` (from the checkout,
   with a small shim) and runs N random instructions of every opcode on both
   (random registers, flags, PC, operands, memory), comparing registers,
-  flags, cycles, the jam and every byte written. 10,000 of each (2.56 M):
-  identical but for the table above.
+  flags, cycles, the jam and every byte written, for the 6502 and then the
+  65C02. 10,000 of each (2.56 M a variant): identical but for the table
+  above, and on the 65C02 `JMP ($FFFF)` and `JMP ($FFxx,X)` past $FFFF,
+  where the pointer's next byte is $0000 and AppleWin reads past its 64K.
 * The opcodes that differ, and the store/load ones with odd high‑byte
   behaviour (SHA, SHX, SHY, TAS, LAS, LXA), were run on Tom Harte's
   SingleStepTests (6502 v1, from real chip behaviour, 10,000 cases each):

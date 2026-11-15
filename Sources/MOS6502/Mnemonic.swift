@@ -1,7 +1,7 @@
-/// What an instruction does.  The documented instructions, then the NMOS
-/// 6502's undocumented ones by their common names; AppleWin names several
-/// differently (after Adam Vardy's "Extra Instructions Of The 65XX Series
-/// CPU"), noted at each.
+/// What an instruction does.  The documented instructions, the 65C02's new
+/// ones, then the NMOS 6502's undocumented ones by their common names;
+/// AppleWin names several differently (after Adam Vardy's "Extra
+/// Instructions Of The 65XX Series CPU"), noted at each.
 public enum Mnemonic: String, Sendable, CaseIterable {
     // Loads and stores
     case lda, ldx, ldy, sta, stx, sty
@@ -20,6 +20,19 @@ public enum Mnemonic: String, Sendable, CaseIterable {
     // Flags
     case clc, sec, cli, sei, cld, sed, clv
     case nop
+
+    // 65C02 (the 65C02's INC A and DEC A are `inc` and `dec`, BIT #imm `bit`)
+    /// Branch always.
+    case bra
+    /// Push and pull X and Y.
+    case phx, phy, plx, ply
+    /// Stores zero.
+    case stz
+    /// Test and reset bits: Z = A AND operand is 0, then the operand's bits
+    /// that are set in A cleared.
+    case trb
+    /// Test and set bits: Z as TRB, then the bits of A set in the operand.
+    case tsb
 
     // Undocumented: a read-modify-write and an operation on A
     /// ASL, then ORA the result (AppleWin: ASO).
@@ -81,9 +94,9 @@ public enum Mnemonic: String, Sendable, CaseIterable {
         case .lda, .ldx, .ldy, .adc, .sbc, .and, .ora, .eor, .cmp, .cpx, .cpy, .bit, .nop,
              .lax, .las, .anc, .alr, .arr, .ane, .lxa, .sbx:
             .read
-        case .sta, .stx, .sty, .sax, .sha, .shx, .shy, .tas:
+        case .sta, .stx, .sty, .stz, .sax, .sha, .shx, .shy, .tas:
             .write
-        case .asl, .lsr, .rol, .ror, .inc, .dec, .slo, .rla, .sre, .rra, .dcp, .isc:
+        case .asl, .lsr, .rol, .ror, .inc, .dec, .trb, .tsb, .slo, .rla, .sre, .rra, .dcp, .isc:
             .readModifyWrite
         default:
             .none

@@ -40,8 +40,15 @@ extension CPU6502 {
             return indexed(zeroPageWord(fetch()), by: y)
         case .indirect:
             let pointer = fetchWord()
+            guard !isCMOS else {                // fixed, at a cycle more for $xxFF (`addsCycleOnPageCross`)
+                return Operand(address: readWord(pointer), crossesPage: pointer & 0xFF == 0xFF)
+            }
             let highByte = pointer & 0xFF00 | UInt16(UInt8(pointer & 0xFF) &+ 1)     // no carry: the NMOS bug
             return Operand(address: UInt16(read(pointer)) | UInt16(read(highByte)) << 8)
+        case .zeroPageIndirect:
+            return Operand(address: zeroPageWord(fetch()))
+        case .absoluteIndexedIndirect:
+            return Operand(address: readWord(fetchWord() &+ UInt16(x)))
         case .relative:
             let offset = Int8(bitPattern: fetch())
             return Operand(address: pc &+ UInt16(bitPattern: Int16(offset)))

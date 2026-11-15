@@ -2,7 +2,7 @@
 # Compares the package with AppleWin's 6502: builds AppleWin's own CPU code
 # from a checkout (cpu_check_applewin.cpp) and the checker (cpu_check.swift,
 # with the package's sources), runs random single instructions of every
-# opcode on both.
+# opcode on both: the 6502, then the 65C02.
 # Usage: ./cpu_check.sh path/to/AppleWin [CASES_PER_OPCODE]
 set -e
 cd "$(dirname "$0")"
@@ -17,5 +17,7 @@ swiftc -O -wmo -parse-as-library -cross-module-optimization -module-name MOS6502
     -emit-library -static -o "$OUT/libMOS6502.a" ../Sources/MOS6502/*.swift
 clang++ -std=c++17 -O2 -w -I "$1/source/CPU" -o "$OUT/applewin" cpu_check_applewin.cpp
 swiftc -O -wmo -parse-as-library -I "$OUT" -L "$OUT" -lMOS6502 -o "$OUT/check" cpu_check.swift
-"$OUT/applewin" "$OUT/cases.bin" "${2:-1000}"
-"$OUT/check" "$OUT/cases.bin"
+for variant in 6502 65c02; do
+    "$OUT/applewin" "$OUT/cases.bin" "${2:-1000}" $variant
+    "$OUT/check" "$OUT/cases.bin"
+done

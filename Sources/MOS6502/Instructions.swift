@@ -13,14 +13,16 @@ extension CPU6502 {
         case .sty: store(y, operand)
 
         // Arithmetic and logic
-        case .adc: addWithCarry(load(operand))
-        case .sbc: subtractWithBorrow(load(operand))
+        case .adc: isCMOS && isSet(Flag.decimal) ? addDecimalCMOS(load(operand)) : addWithCarry(load(operand))
+        case .sbc: isCMOS && isSet(Flag.decimal) ? subtractDecimalCMOS(load(operand)) : subtractWithBorrow(load(operand))
         case .and: a = nz(a & load(operand))
         case .ora: a = nz(a | load(operand))
         case .eor: a = nz(a ^ load(operand))
         case .cmp: compare(a, load(operand))
         case .cpx: compare(x, load(operand))
         case .cpy: compare(y, load(operand))
+        case .bit where mode == .immediate:     // 65C02: Z only
+            set(Flag.zero, a & load(operand) == 0)
         case .bit:
             let value = load(operand)
             set(Flag.zero, a & value == 0)
@@ -83,7 +85,17 @@ extension CPU6502 {
         case .sed: set(Flag.decimal, true)
         case .clv: set(Flag.overflow, false)
 
-        case .nop: if mode != .implied { _ = load(operand) }
+        case .nop: if mode != .implied && !(isCMOS && opcode.byte == 0x5C) { _ = load(operand) }  // 65C02 $5C: no read, as AppleWin
+
+        // 65C02
+        case .bra: branch(to: operand, if: true)
+        case .phx: push(x)
+        case .phy: push(y)
+        case .plx: x = nz(pull())
+        case .ply: y = nz(pull())
+        case .stz: store(0, operand)
+        case .tsb: modify(mode, operand) { testBits($0); return $0 | a }
+        case .trb: modify(mode, operand) { testBits($0); return $0 & ~a }
 
         // Undocumented (UndocumentedInstructions.swift)
         case .slo: a = nz(a | modify(mode, operand) { shiftLeft($0) })
@@ -110,6 +122,11 @@ extension CPU6502 {
             isJammed = true
             throw CPUError.jammed(at: address)
         }
+    }
+
+    /// TSB, TRB: Z = no bit of `value` set in A.
+    func testBits(_ value: UInt8) {
+        set(Flag.zero, a & value == 0)
     }
 
     /// JSR pushes the address of its own last byte (RTS adds 1) and jumps.  The

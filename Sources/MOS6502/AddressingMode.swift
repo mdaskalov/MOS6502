@@ -29,13 +29,18 @@ public enum AddressingMode: Sendable, CaseIterable {
     case indirect
     /// Branches: -128...127 from the next instruction.
     case relative
+    /// 65C02: `LDA ($12)`: the address at $12 in the zero page (the high byte
+    /// from $00 for $FF).
+    case zeroPageIndirect
+    /// 65C02: `JMP ($1234,X)`: the address at $1234 + X.
+    case absoluteIndexedIndirect
 
     /// Bytes of the instruction, the opcode included.
     public var length: Int {
         switch self {
         case .implied, .accumulator: 1
-        case .immediate, .zeroPage, .zeroPageX, .zeroPageY, .indirectX, .indirectY, .relative: 2
-        case .absolute, .absoluteX, .absoluteY, .indirect: 3
+        case .immediate, .zeroPage, .zeroPageX, .zeroPageY, .indirectX, .indirectY, .relative, .zeroPageIndirect: 2
+        case .absolute, .absoluteX, .absoluteY, .indirect, .absoluteIndexedIndirect: 3
         }
     }
 
@@ -62,6 +67,8 @@ public enum AddressingMode: Sendable, CaseIterable {
         case .indirectX: "($\(byte),X)"
         case .indirectY: "($\(byte)),Y"
         case .indirect: "($\(word))"
+        case .zeroPageIndirect: "($\(byte))"
+        case .absoluteIndexedIndirect: "($\(word),X)"
         case .relative: "$\(hex(next &+ UInt16(bitPattern: Int16(Int8(bitPattern: UInt8(value & 0xFF)))), 4))"
         }
     }

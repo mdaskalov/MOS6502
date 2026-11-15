@@ -1,9 +1,11 @@
-// AppleWin's NMOS 6502 (its own cpu6502.h, cpu_general.inl and
-// cpu_instructions.inl, included from an AppleWin checkout) on random single
-// instructions, for cpu_check.swift to compare the MOS6502 package with.
-// Build and run with cpu_check.sh.
+// AppleWin's NMOS 6502 or 65C02 (its own cpu6502.h, cpu65C02.h,
+// cpu_general.inl and cpu_instructions.inl, included from an AppleWin
+// checkout) on random single instructions, for cpu_check.swift to compare the
+// MOS6502 package with.  Build and run with cpu_check.sh.
+// Usage: applewin CASES.bin [CASES_PER_OPCODE] [6502|65c02]
 //
-// Writes: the 64K memory every case starts from, then per case
+// Writes: the variant (u8: 0 the 6502, 1 the 65C02), the 64K memory every
+// case starts from, then per case
 //   in:  pc u16, a x y p sp u8, the 3 instruction bytes
 //   out: pc u16, a x y p sp u8, cycles u32, jammed u8, n u16, n x (address u16, value u8)
 // (the bytes that differ from the start memory afterwards; little-endian).
@@ -42,7 +44,7 @@ typedef BYTE (*iofunction)(WORD, WORD, BYTE, BYTE, ULONG);
 static BYTE ioRead(WORD, WORD addr, BYTE, BYTE, ULONG) { return mem[addr]; }
 static iofunction IORead[256], IOWrite[256];
 
-static eCpuType GetActiveCpu() { return CPU_6502; }
+static eCpuType GetActiveCpu() { return CPU_6502; }     // not the Z80
 static UINT z80_mainloop(ULONG, ULONG) { return 0; }
 static bool NMI(ULONG&, BOOL&, BOOL&, BOOL&, BOOL&) { return false; }
 static bool IRQ(ULONG&, BOOL&, BOOL&, BOOL&, BOOL&) { return false; }
@@ -62,6 +64,9 @@ static void Fetch(BYTE& iOpcode, ULONG uExecutedCycles) {
 #define READ(addr) _READ(addr)
 #define WRITE(value) _WRITE(value)
 #include "cpu6502.h"
+#define READ(addr) _READ(addr)
+#define WRITE(value) _WRITE(value)
+#include "cpu65C02.h"
 
 static uint32_t state = 2463534242u;
 static uint32_t rnd() { state ^= state << 13; state ^= state >> 17; state ^= state << 5; return state; }
@@ -76,6 +81,7 @@ template <typename T> static void put(FILE* f, T v) { fwrite(&v, sizeof v, 1, f)
 
 int main(int argc, char** argv) {
     int perOpcode = argc > 2 ? atoi(argv[2]) : 1000;
+    bool cmos = argc > 3 && strcmp(argv[3], "65c02") == 0;
     FILE* out = fopen(argc > 1 ? argv[1] : "cpu_cases.bin", "wb");
     if (!out) { perror("output"); return 1; }
     for (int page = 0; page < 256; page++) {
@@ -83,6 +89,7 @@ int main(int argc, char** argv) {
         IORead[page] = ioRead;
         IOWrite[page] = nullptr;
     }
+    put(out, BYTE(cmos));
     std::vector<BYTE> start(0x10000);
     for (auto& b : start) b = interestingByte();
     fwrite(start.data(), 1, 0x10000, out);
@@ -96,7 +103,7 @@ int main(int argc, char** argv) {
             BYTE a = interestingByte(), x = rnd(), y = rnd(), p = BYTE(rnd()) | AF_RESERVED, sp = rnd();
             regs = {a, x, y, p, pc, WORD(0x100 | sp), 0};
 
-            ULONG cycles = Cpu6502(1, false);
+            ULONG cycles = cmos ? Cpu65C02(1, false) : Cpu6502(1, false);
 
             put(out, pc); put(out, a); put(out, x); put(out, y); put(out, p); put(out, sp);
             fwrite(code, 1, 3, out);
