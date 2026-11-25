@@ -429,3 +429,51 @@ private func cmos(_ code: [UInt8]) -> CPU6502 {
         #expect(add(0x01, 0x01) == 0x03 && !add.carry)                 // the carry in
     }
 }
+
+/// `callTraps`: `onCall` asked at a JSR to the subroutine, not where a branch
+/// gets there.  $0300: `LDX #3 / JSR $0310 / RTS`; $0310: `DEX / BNE $0310 /
+/// RTS`, branching back to its own start.
+@Suite struct CallTraps {
+    private func loop() -> CPU6502 {
+        let c = cpu([0xA2, 0x03, 0x20, 0x10, 0x03, 0x60])
+        c.mem.replaceSubrange(0x0310 ..< 0x0314, with: [0xCA, 0xD0, 0xFD, 0x60])
+        c.callTraps[0x0310] = true
+        return c
+    }
+
+    @Test func onlyTheJSR() throws {
+        let c = loop()
+        var calls: [UInt16] = []
+        c.onCall = { calls.append($0) }
+        try c.call(0x0300)
+        #expect(calls == [0x0310] && c.x == 0)
+        // LDX 2, JSR 6, (DEX 2 + BNE 3) x2, DEX 2 + BNE 2, RTS 6 (+ the call's RTS 6)
+        #expect(c.cycles == 2 + 6 + 10 + 4 + 6 + 6)
+    }
+
+    @Test func runsTheSubroutineItself() throws {
+        let c = loop()
+        var after: UInt64 = 0
+        c.onCall = { [unowned c] _ in
+            #expect(c.cycles == 8 && c.pc == 0x0310 && c.sp == 0xFD - 2)
+            while c.pc != 0x0305 { try? c.step() }
+            after = c.cycles
+        }
+        c.sp = 0xFF
+        c.pushWord(0xFFFE)
+        c.pc = 0x0300
+        while c.pc != 0xFFFF { try c.step() }
+        #expect(after == 8 + 20 && c.cycles == after + 6 && c.x == 0)
+    }
+
+    @Test func skipsIt() throws {
+        let c = loop()
+        c.onCall = { [unowned c] _ in
+            c.returnFromSubroutine()
+            c.x = 0x42
+            c.cycles += 1
+        }
+        try c.call(0x0300)
+        #expect(c.x == 0x42 && c.cycles == 2 + 6 + 1 + 6)
+    }
+}

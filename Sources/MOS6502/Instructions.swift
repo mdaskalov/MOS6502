@@ -131,11 +131,18 @@ extension CPU6502 {
 
     /// JSR pushes the address of its own last byte (RTS adds 1) and jumps.  The
     /// 6502 reads the target's high byte only after the pushes, which can
-    /// overwrite it (AppleWin GH#1257).
+    /// overwrite it (AppleWin GH#1257).  To a subroutine in `callTraps`, the
+    /// JSR done, `onCall` decides what follows: the instructions it steps end
+    /// on their own cycles, the JSR on the cycle it leaves.
     func jumpToSubroutine() {
         let low = fetch()
         pushWord(pc)
         pc = UInt16(read(pc)) << 8 | UInt16(low)
+        if callTraps[Int(pc)] {
+            cycles = end
+            onCall(pc)
+            end = cycles
+        }
     }
 
     /// A branch taken takes a cycle more, two when it lands on another page

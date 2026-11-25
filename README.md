@@ -27,7 +27,7 @@ try cpu.call(0x6000)                        // JSR and run until it returns
 | `Opcode.swift` | `Opcode`: length, the page‑crossing rule, `Opcode(0xBD)`, `Opcode(0x80, .cmos65C02)` |
 | `Mnemonic.swift` | what each instruction does, AppleWin's names for the undocumented ones, how it uses its operand (`Access`) |
 | `AddressingMode.swift` | the 15 modes (the 65C02's `(zp)` and `(abs,X)` among them), their length and assembly syntax |
-| `CPU6502.swift` | the variant, registers, memory, I/O, write‑only I/O and watched pages, traps, `step`, `call`, reset, IRQ, NMI |
+| `CPU6502.swift` | the variant, registers, memory, I/O, write‑only I/O and watched pages, traps, call traps, `step`, `call`, reset, IRQ, NMI |
 | `Addressing.swift` | finding the operand, and reading/writing it on the 6502's cycles |
 | `Instructions.swift` | `execute`: every instruction, one line each where it can be |
 | `UndocumentedInstructions.swift` | the undocumented ones that need more than a line |
@@ -56,6 +56,23 @@ cpu.onTrap = { pc in
 
 `Adder` carries through `CLC / ADC / ADC …` where nothing in between touches
 the flags.
+
+A trap at the entry also stops a branch or a JMP back to the routine's
+start.  `callTraps` and `onCall` stop only a JSR to it: `onCall` gets the
+address after the JSR's pushes and cycles, and may step the routine to its
+RTS itself, set the registers, PC and `cycles`, or leave them for the
+routine to run as ever:
+
+```swift
+cpu.callTraps[0x6000] = true
+cpu.onCall = { _ in
+    let sp = cpu.sp &+ 2                    // the caller's, after the RTS
+    let back = (UInt16(cpu.mem[0x101 + Int(cpu.sp)]) | UInt16(cpu.mem[0x102 + Int(cpu.sp)]) << 8) &+ 1
+    // … before
+    while !(cpu.pc == back && cpu.sp == sp) { try? cpu.step() }
+    // … after
+}
+```
 
 ## Cycles
 
