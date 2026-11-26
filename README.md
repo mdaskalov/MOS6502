@@ -74,6 +74,16 @@ cpu.onCall = { _ in
 }
 ```
 
+`jumpTraps` add a JMP (any mode) to the routine: a tail call, the caller's
+last `JMP routine` in place of `JSR routine / RTS`.  `onCall` gets the
+address after the JMP's cycles; the stack holds the caller's caller's
+return address, where the routine's RTS goes, so the code above works
+unchanged.  The routine's own JMPs back to its start count too.
+
+```swift
+cpu.jumpTraps[0x6000] = true                // also `JMP $6000`
+```
+
 ## Cycles
 
 `Opcode.cycles` is the count without extras; on top, as on the chip:

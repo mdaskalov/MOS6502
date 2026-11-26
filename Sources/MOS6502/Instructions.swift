@@ -56,7 +56,7 @@ extension CPU6502 {
         case .plp: p = pullStatus()
 
         // Jumps, subroutines and interrupts
-        case .jmp: pc = operand.address
+        case .jmp: jump(to: operand.address)
         case .jsr: jumpToSubroutine()
         case .rts: returnFromSubroutine()
         case .rti:
@@ -139,6 +139,17 @@ extension CPU6502 {
         pushWord(pc)
         pc = UInt16(read(pc)) << 8 | UInt16(low)
         if callTraps[Int(pc)] {
+            cycles = end
+            onCall(pc)
+            end = cycles
+        }
+    }
+
+    /// JMP.  To a subroutine in `jumpTraps` (a tail call), `onCall` decides
+    /// what follows, as after a JSR: the JMP ends on the cycle it leaves.
+    func jump(to address: UInt16) {
+        pc = address
+        if jumpTraps[Int(pc)] {
             cycles = end
             onCall(pc)
             end = cycles

@@ -476,4 +476,48 @@ private func cmos(_ code: [UInt8]) -> CPU6502 {
         try c.call(0x0300)
         #expect(c.x == 0x42 && c.cycles == 2 + 6 + 1 + 6)
     }
+
+    /// $0320: `LDX #3 / JMP $0310`, a tail call: the subroutine returns to
+    /// $0320's caller.
+    private func tailCall() -> CPU6502 {
+        let c = loop()
+        c.mem.replaceSubrange(0x0320 ..< 0x0325, with: [0xA2, 0x03, 0x4C, 0x10, 0x03])
+        return c
+    }
+
+    @Test func notAJMPByDefault() throws {
+        let c = tailCall()
+        var calls: [UInt16] = []
+        c.onCall = { calls.append($0) }
+        try c.call(0x0320)
+        #expect(calls.isEmpty && c.x == 0)
+    }
+
+    @Test func aJMPToAJumpTrap() throws {
+        let c = tailCall()
+        c.jumpTraps[0x0310] = true
+        var calls: [UInt16] = []
+        c.onCall = { [unowned c] in
+            // LDX 2, JMP 3: the JMP's cycles taken, the caller's return on the stack.
+            #expect(c.cycles == 5 && c.pc == 0x0310 && c.sp == 0xFD)
+            calls.append($0)
+        }
+        try c.call(0x0320)
+        // Not the BNE back to its start.
+        #expect(calls == [0x0310] && c.x == 0)
+        // LDX 2, JMP 3, (DEX 2 + BNE 3) x2, DEX 2 + BNE 2, RTS 6
+        #expect(c.cycles == 2 + 3 + 10 + 4 + 6)
+    }
+
+    @Test func aJMPRunsItItself() throws {
+        let c = tailCall()
+        c.jumpTraps[0x0310] = true
+        c.onCall = { [unowned c] _ in
+            c.returnFromSubroutine()
+            c.x = 0x42
+            c.cycles += 1
+        }
+        try c.call(0x0320)
+        #expect(c.x == 0x42 && c.cycles == 2 + 3 + 1)
+    }
 }

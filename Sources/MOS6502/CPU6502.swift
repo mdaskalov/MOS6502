@@ -83,9 +83,14 @@ public final class CPU6502 {
     /// Subroutines where `onCall` is asked when a JSR jumps to them: only a
     /// JSR, not a branch, JMP or RTS that reaches the address.
     @exclusivity(unchecked) public var callTraps = [Bool](repeating: false, count: 0x10000)
+    /// Subroutines where `onCall` is also asked when a JMP (any mode) jumps
+    /// to them: a tail call, the subroutine returning to its caller's
+    /// caller.  Its own JMPs back to its start count too.
+    @exclusivity(unchecked) public var jumpTraps = [Bool](repeating: false, count: 0x10000)
     /// Called with the subroutine's address after a JSR to one of `callTraps`
     /// has pushed its return address and taken its 6 cycles (`cycles` is the
-    /// cycle after it), PC at the subroutine.  It may run the CPU itself
+    /// cycle after it), or a JMP to one of `jumpTraps` has taken its own, PC
+    /// at the subroutine.  It may run the CPU itself
     /// (`step` the subroutine to its RTS), set the registers, PC and `cycles`:
     /// the JSR ends where it leaves them.  Left as they are, the subroutine
     /// runs as ever.
